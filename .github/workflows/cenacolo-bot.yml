@@ -2,8 +2,8 @@ name: Cenacolo Bot
 
 on:
   schedule:
-    # 08:00 e 20:00 UTC (circa 09:00 e 21:00 Europe/Rome in orario standard)
-    - cron: "0 8,20 * * *"
+    # Ogni 6 ore (UTC): controllo news nuove
+    - cron: "0 */6 * * *"
   workflow_dispatch:
 
 permissions:
@@ -43,6 +43,7 @@ jobs:
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
         run: |
           node cenacolo-ticket-bot.js \
+            --mode check \
             --notify email \
             --state-file .github/state/cenacolo_seen.json
 

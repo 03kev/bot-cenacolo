@@ -12,10 +12,12 @@ const { fetchPosts, isSalePost } = require('./scripts/fetch-news');
 const { displayDate, resolveSaleDate } = require('./scripts/sale-info');
 
 const DEFAULTS = {
+  mode: 'check',
   newsUrl: 'https://cenacolovinciano.org/notizie/',
   baseUrl: 'https://cenacolovinciano.org',
   stateFile: '.cenacolo_seen.json',
   limit: 40,
+  digestLimit: 5,
   timeoutMs: 20_000,
   notify: 'stdout',
 };
@@ -30,10 +32,12 @@ function parseArgs(argv) {
 
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
-    if (token === '--news-url') args.newsUrl = argv[++i];
+    if (token === '--mode') args.mode = (argv[++i] || DEFAULTS.mode).toLowerCase();
+    else if (token === '--news-url') args.newsUrl = argv[++i];
     else if (token === '--base-url') args.baseUrl = argv[++i];
     else if (token === '--state-file') args.stateFile = argv[++i];
     else if (token === '--limit') args.limit = Number(argv[++i] || DEFAULTS.limit);
+    else if (token === '--digest-limit') args.digestLimit = Number(argv[++i] || DEFAULTS.digestLimit);
     else if (token === '--timeout-ms') args.timeoutMs = Number(argv[++i] || DEFAULTS.timeoutMs);
     else if (token === '--notify') args.notify = argv[++i] || DEFAULTS.notify;
     else if (token === '--show-all') args.showAll = true;
@@ -45,6 +49,10 @@ function parseArgs(argv) {
     }
   }
 
+  if (!['check', 'digest'].includes(args.mode)) {
+    throw new Error(`Mode non supportata: ${args.mode}. Usa --mode check|digest`);
+  }
+
   return args;
 }
 
@@ -53,18 +61,35 @@ function printHelp() {
 Uso:
   node cenacolo-ticket-bot.js [opzioni]
 
-  Opzioni:
+Opzioni:
+  --mode <check|digest>       check=news nuove, digest=ultime N news
   --news-url <url>            URL pagina notizie
   --base-url <url>            URL base sito
-  --state-file <path>         File JSON con post gia visti
-  --limit <n>                 Numero massimo post da leggere (default: 40)
+  --state-file <path>         File JSON con post gia visti (mode check)
+  --limit <n>                 Numero post da leggere in mode check (default: 40)
+  --digest-limit <n>          Numero post da inviare in mode digest (default: 5)
   --timeout-ms <n>            Timeout HTTP in ms (default: 20000)
   --notify <canali>           Canali separati da virgola: stdout,email
-  --show-all                  Mostra/notifica anche post gia visti
-  --notify-on-first-run       Notifica anche al primo avvio
-  --no-save                   Non aggiorna il file stato
+  --show-all                  Mostra/notifica anche post gia visti (mode check)
+  --notify-on-first-run       Notifica anche al primo avvio (mode check)
+  --no-save                   Non aggiorna il file stato (mode check)
   --help, -h                  Mostra questo help
 `);
+}
+
+function splitNotifyChannels(notifyArg) {
+  return new Set(
+    String(notifyArg || '')
+      .split(',')
+      .map((x) => x.trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+function isEnabled(value, defaultValue = true) {
+  if (value == null || String(value).trim() === '') return defaultValue;
+  const normalized = String(value).trim().toLowerCase();
+  return !['0', 'false', 'no', 'off'].includes(normalized);
 }
 
 async function loadState(filePath) {
@@ -88,17 +113,44 @@ async function saveState(filePath, seen) {
   await fs.writeFile(filePath, JSON.stringify(sorted, null, 2), 'utf8');
 }
 
-function splitNotifyChannels(notifyArg) {
-  return new Set(
-    String(notifyArg || '')
-      .split(',')
-      .map((x) => x.trim().toLowerCase())
-      .filter(Boolean)
-  );
+function getSmtpConfig() {
+  const host = process.env.SMTP_HOST;
+  const port = Number(process.env.SMTP_PORT || 587);
+  const secure = String(process.env.SMTP_SECURE || 'false').toLowerCase() === 'true';
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  const from = process.env.EMAIL_FROM;
+
+  if (!host || !user || !pass || !from) {
+    throw new Error('Variabili SMTP mancanti: SMTP_HOST, SMTP_USER, SMTP_PASS, EMAIL_FROM');
+  }
+
+  return { host, port, secure, user, pass, from };
 }
 
-async function formatDigest(posts) {
-  const lines = [`Nuove news Cenacolo (${posts.length})`];
+async function sendEmail({ to, subject, text }) {
+  if (!to) {
+    throw new Error('Destinatario email mancante.');
+  }
+
+  const smtp = getSmtpConfig();
+  const transporter = nodemailer.createTransport({
+    host: smtp.host,
+    port: smtp.port,
+    secure: smtp.secure,
+    auth: { user: smtp.user, pass: smtp.pass },
+  });
+
+  await transporter.sendMail({
+    from: smtp.from,
+    to,
+    subject,
+    text,
+  });
+}
+
+async function formatNewsList(posts, header) {
+  const lines = [header];
 
   for (const post of posts) {
     lines.push('');
@@ -114,38 +166,7 @@ async function formatDigest(posts) {
   return lines.join('\n');
 }
 
-async function notifyStdout(posts) {
-  console.log(await formatDigest(posts));
-}
-
-async function notifyEmail(posts) {
-  const host = process.env.SMTP_HOST;
-  const port = Number(process.env.SMTP_PORT || 587);
-  const secure = String(process.env.SMTP_SECURE || 'false').toLowerCase() === 'true';
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const from = process.env.EMAIL_FROM;
-  const to = process.env.EMAIL_TO;
-
-  if (!host || !user || !pass || !from || !to) {
-    throw new Error('Variabili SMTP mancanti: SMTP_HOST, SMTP_USER, SMTP_PASS, EMAIL_FROM, EMAIL_TO');
-  }
-
-  const transporter = nodemailer.createTransport({
-    host,
-    port,
-    secure,
-    auth: { user, pass },
-  });
-
-  const subject = `[Cenacolo] Nuove news (${posts.length})`;
-  const text = await formatDigest(posts);
-
-  await transporter.sendMail({ from, to, subject, text });
-}
-
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
+async function runCheckMode(args) {
   const statePath = path.resolve(process.cwd(), args.stateFile);
   const { exists: stateExists, seen: seenBefore } = await loadState(statePath);
 
@@ -162,8 +183,8 @@ async function main() {
   }
 
   const firstRun = !stateExists;
-
   let toNotify = posts;
+
   if (!args.showAll) {
     toNotify = posts.filter((post) => !seenBefore.has(post.uid));
   }
@@ -177,13 +198,21 @@ async function main() {
   if (toNotify.length === 0) {
     console.log('Nessuna nuova news.');
   } else {
+    const body = await formatNewsList(toNotify, `Nuove news Cenacolo (${toNotify.length})`);
+
     if (channels.has('stdout')) {
-      await notifyStdout(toNotify);
+      console.log(body);
     }
+
     if (channels.has('email')) {
-      await notifyEmail(toNotify);
-      console.log(`Email inviata (${toNotify.length} news).`);
+      await sendEmail({
+        to: process.env.EMAIL_TO,
+        subject: `[Cenacolo] Nuove news (${toNotify.length})`,
+        text: body,
+      });
+      console.log(`Email inviata a EMAIL_TO (${toNotify.length} news).`);
     }
+
     if (channels.size === 0) {
       console.log('Nessun canale notifica selezionato; usa --notify stdout,email');
     }
@@ -193,6 +222,57 @@ async function main() {
     const updatedSeen = new Set([...seenBefore, ...posts.map((post) => post.uid)]);
     await saveState(statePath, updatedSeen);
   }
+}
+
+async function runDigestMode(args) {
+  if (!isEnabled(process.env.DAILY_TOP5_ENABLED, true)) {
+    console.log('Digest giornaliero disattivato (DAILY_TOP5_ENABLED=false).');
+    return;
+  }
+
+  const posts = await fetchPosts({
+    newsUrl: args.newsUrl,
+    baseUrl: args.baseUrl,
+    limit: args.digestLimit,
+    timeoutMs: args.timeoutMs,
+  });
+
+  if (posts.length === 0) {
+    console.log('Nessuna news trovata per digest.');
+    return;
+  }
+
+  const digestPosts = posts.slice(0, Math.max(args.digestLimit, 1));
+  const body = await formatNewsList(digestPosts, `Ultime ${digestPosts.length} news Cenacolo`);
+  const channels = splitNotifyChannels(args.notify);
+
+  if (channels.has('stdout')) {
+    console.log(body);
+  }
+
+  if (channels.has('email')) {
+    await sendEmail({
+      to: process.env.EMAIL_TO2,
+      subject: `[Cenacolo] Ultime ${digestPosts.length} news`,
+      text: body,
+    });
+    console.log(`Digest inviato a EMAIL_TO2 (${digestPosts.length} news).`);
+  }
+
+  if (channels.size === 0) {
+    console.log('Nessun canale notifica selezionato; usa --notify stdout,email');
+  }
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+
+  if (args.mode === 'digest') {
+    await runDigestMode(args);
+    return;
+  }
+
+  await runCheckMode(args);
 }
 
 main().catch((error) => {

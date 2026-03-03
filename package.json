@@ -1,0 +1,23 @@
+{
+  "name": "bot-cenacolo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Monitor annunci vendite biglietti Cenacolo Vinciano",
+  "main": "cenacolo-ticket-bot.js",
+  "scripts": {
+    "start": "node cenacolo-ticket-bot.js",
+    "check": "node --check cenacolo-ticket-bot.js",
+    "news:latest": "node scripts/news-latest.js",
+    "news:sales": "node scripts/news-sales.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "axios": "^1.8.2",
+    "cheerio": "^1.0.0",
+    "dotenv": "^16.4.7",
+    "nodemailer": "^6.10.0",
+    "twilio": "^5.4.0"
+  }
+}

@@ -35,16 +35,6 @@ function toAbsolute(url, baseUrl) {
   }
 }
 
-function extractDate($card, $) {
-  const timeNode = $card.find('time').first();
-  const datetime = normalizeSpaces(timeNode.attr('datetime'));
-  if (datetime) return datetime;
-
-  const text = normalizeSpaces($card.text());
-  const dateMatch = text.match(/\b\d{1,2}\s+[A-Za-zÀ-ÿ]+\s+\d{4}\b/);
-  return dateMatch ? dateMatch[0] : '';
-}
-
 function mapApiPost(entry) {
   const title = normalizeSpaces(cheerio.load(entry?.title?.rendered || '').text());
   const excerpt = normalizeSpaces(cheerio.load(entry?.excerpt?.rendered || '').text());
@@ -80,70 +70,80 @@ async function fetchPostsFromApi(options) {
   return response.data.map(mapApiPost).filter((post) => post.title);
 }
 
-function collectFromArticles($, cfg, seen) {
+function extractDateFromCard($card, $) {
+  const timeDate = normalizeSpaces($card.find('time').first().attr('datetime'));
+  if (timeDate) return timeDate;
+
+  const liItems = $card
+    .find('ul.paginator li')
+    .map((_, li) => normalizeSpaces($(li).text()))
+    .get();
+
+  const fromList = liItems.find((text) => /\b20\d{2}\b/.test(text));
+  if (fromList) return fromList;
+
+  const blockText = normalizeSpaces($card.text());
+  const dateMatch = blockText.match(/\b\d{1,2}\s+[A-Za-zÀ-ÿ]+\s+20\d{2}\b/);
+  return dateMatch ? dateMatch[0] : '';
+}
+
+function extractExcerptFromCard($card, $) {
+  const mainCol = $card.find('div.col-11').first();
+  const paragraphs = (mainCol.length ? mainCol : $card)
+    .find('p')
+    .map((_, p) => normalizeSpaces($(p).text()))
+    .get()
+    .filter(Boolean);
+
+  return normalizeSpaces(paragraphs.join(' '));
+}
+
+function parseNewsLoopCards($, cfg) {
   const posts = [];
+  const seen = new Set();
 
-  $('article').each((_, article) => {
-    const $article = $(article);
-    const heading = $article.find('h1, h2, h3, h4, h5, h6').first();
-    if (!heading.length) return;
+  const cards = $('#news-loop #news-row > div.col-12.margin-b-100');
+  if (!cards.length) return posts;
 
-    const title = normalizeSpaces(heading.text());
+  cards.each((_, card) => {
+    const $card = $(card);
+    const title = normalizeSpaces($card.find('h3.green-banner, h3.link-banner, h3').first().text());
     if (!title) return;
 
-    const link =
-      toAbsolute(heading.find('a').first().attr('href'), cfg.baseUrl) ||
-      toAbsolute($article.find('a').first().attr('href'), cfg.baseUrl);
-    const date = extractDate($article, $);
-    const excerpt = normalizeSpaces(
-      $article
-        .find('p')
-        .map((__, p) => $(p).text())
-        .get()
-        .join(' ')
-    );
-
+    const link = toAbsolute($card.find('a.btn--read[href]').first().attr('href'), cfg.baseUrl);
+    const date = extractDateFromCard($card, $);
+    const excerpt = extractExcerptFromCard($card, $);
     const uid = link || `${date}|${title}`;
-    if (!uid || seen.has(uid)) return;
 
+    if (!uid || seen.has(uid)) return;
     seen.add(uid);
+
     posts.push({ title, excerpt, link, date, uid });
   });
 
   return posts;
 }
 
-function collectFromReadMore($, cfg, seen) {
+function parseReadMoreFallback($, cfg) {
   const posts = [];
+  const seen = new Set();
 
-  $('a').each((_, anchor) => {
+  $('a.btn--read[href]').each((_, anchor) => {
     const $anchor = $(anchor);
-    const label = normalizeSpaces($anchor.text());
-    if (!/leggi\s+tutto/i.test(label)) return;
-
-    const $card = $anchor.closest('article, li, div, section');
+    const $card = $anchor.closest('div.col-12.margin-b-100, article, li, section, div');
     if (!$card.length) return;
 
-    const heading = $card.find('h1, h2, h3, h4, h5, h6').first();
-    const title = normalizeSpaces(heading.text());
+    const title = normalizeSpaces($card.find('h3, h2, h1').first().text());
     if (!title) return;
 
-    const link =
-      toAbsolute($anchor.attr('href'), cfg.baseUrl) ||
-      toAbsolute(heading.find('a').first().attr('href'), cfg.baseUrl);
-    const date = extractDate($card, $);
-    const excerpt = normalizeSpaces(
-      $card
-        .find('p')
-        .map((__, p) => $(p).text())
-        .get()
-        .join(' ')
-    );
-
+    const link = toAbsolute($anchor.attr('href'), cfg.baseUrl);
+    const date = extractDateFromCard($card, $);
+    const excerpt = extractExcerptFromCard($card, $);
     const uid = link || `${date}|${title}`;
-    if (!uid || seen.has(uid)) return;
 
+    if (!uid || seen.has(uid)) return;
     seen.add(uid);
+
     posts.push({ title, excerpt, link, date, uid });
   });
 
@@ -162,25 +162,10 @@ async function fetchPostsFromHtml(options) {
   }
 
   const $ = cheerio.load(response.data);
-  const seen = new Set();
 
-  let posts = collectFromArticles($, cfg, seen);
-
+  let posts = parseNewsLoopCards($, cfg);
   if (posts.length === 0) {
-    posts = collectFromReadMore($, cfg, seen);
-  }
-
-  if (posts.length === 0) {
-    const fallback = [];
-    $('h1, h2, h3, h4, h5, h6').each((_, h) => {
-      const title = normalizeSpaces($(h).text());
-      if (!title || title.length < 12) return;
-      const uid = `title|${title}`;
-      if (seen.has(uid)) return;
-      seen.add(uid);
-      fallback.push({ title, excerpt: '', link: '', date: '', uid });
-    });
-    posts = fallback;
+    posts = parseReadMoreFallback($, cfg);
   }
 
   return posts.slice(0, Math.min(Math.max(Number(cfg.limit) || 40, 1), 100));
@@ -199,13 +184,13 @@ function isSalePost(post) {
 
 async function fetchPosts(options) {
   try {
-    const apiPosts = await fetchPostsFromApi(options);
-    if (apiPosts.length > 0) return apiPosts;
+    const htmlPosts = await fetchPostsFromHtml(options);
+    if (htmlPosts.length > 0) return htmlPosts;
   } catch (_) {
-    // API can be unavailable or empty for this site.
+    // API fallback below
   }
 
-  return fetchPostsFromHtml(options);
+  return fetchPostsFromApi(options);
 }
 
 module.exports = {

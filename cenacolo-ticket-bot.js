@@ -10,6 +10,7 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const nodemailer = require('nodemailer');
 const twilio = require('twilio');
+const { fetchPosts: fetchStructuredPosts, isSalePost } = require('./scripts/fetch-news');
 
 const DEFAULTS = {
   newsUrl: 'https://cenacolovinciano.org/notizie/',
@@ -84,14 +85,7 @@ function normalizeSpaces(value) {
 }
 
 function matchesSale(post) {
-  const title = normalizeSpaces(post.title).toLowerCase();
-  const excerpt = normalizeSpaces(post.excerpt).toLowerCase();
-
-  if (TITLE_PATTERNS.some((pattern) => pattern.test(title))) {
-    return true;
-  }
-
-  return BODY_KEYWORDS.some((keyword) => excerpt.includes(keyword));
+  return isSalePost(post);
 }
 
 async function fetchPostsFromApi(baseUrl, limit, timeoutMs) {
@@ -242,16 +236,12 @@ async function notifySms(posts) {
 }
 
 async function fetchPosts(args) {
-  try {
-    const apiPosts = await fetchPostsFromApi(args.baseUrl, args.limit, args.timeoutMs);
-    if (apiPosts.length > 0) {
-      return apiPosts;
-    }
-  } catch (error) {
-    // fallback below
-  }
-
-  return fetchPostsFromHtml(args.newsUrl, args.timeoutMs);
+  return fetchStructuredPosts({
+    newsUrl: args.newsUrl,
+    baseUrl: args.baseUrl,
+    limit: args.limit,
+    timeoutMs: args.timeoutMs,
+  });
 }
 
 async function main() {

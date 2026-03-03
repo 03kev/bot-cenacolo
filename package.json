@@ -2,7 +2,7 @@
   "name": "bot-cenacolo",
   "version": "1.0.0",
   "private": true,
-  "description": "Monitor annunci vendite biglietti Cenacolo Vinciano",
+  "description": "Monitor news Cenacolo Vinciano con alert email",
   "main": "cenacolo-ticket-bot.js",
   "scripts": {
     "start": "node cenacolo-ticket-bot.js",
@@ -17,7 +17,6 @@
     "axios": "^1.8.2",
     "cheerio": "^1.0.0",
     "dotenv": "^16.4.7",
-    "nodemailer": "^6.10.0",
-    "twilio": "^5.4.0"
+    "nodemailer": "^6.10.0"
   }
 }

@@ -17,9 +17,6 @@ cp .env.example .env
 Compila `.env`:
 
 - Per email (SMTP): `SMTP_*`, `EMAIL_FROM`, `EMAIL_TO`
-- Per SMS (Twilio): `TWILIO_*`
-
-Puoi usare uno o entrambi i canali.
 
 ## 3) Esecuzione manuale
 
@@ -35,22 +32,18 @@ Email:
 node cenacolo-ticket-bot.js --notify email
 ```
 
-SMS:
+Email + stdout:
 
 ```bash
-node cenacolo-ticket-bot.js --notify sms
-```
-
-Email + SMS + stdout:
-
-```bash
-node cenacolo-ticket-bot.js --notify stdout,email,sms
+node cenacolo-ticket-bot.js --notify stdout,email
 ```
 
 Note:
 
 - Al primo avvio inizializza lo stato e non manda notifiche retroattive.
 - Se vuoi notificare anche al primo avvio: `--notify-on-first-run`
+- Il filtro "solo nuove news" usa il file stato `.cenacolo_seen.json`.
+- Se usi `--show-all`, il filtro anti-duplicati viene ignorato.
 - Formato output/email per news vendita:
 
 ```text
@@ -73,11 +66,32 @@ Aggiungi (09:00 e 21:00 ogni giorno):
 0 9,21 * * * cd /Users/kevinmuka/Desktop/bot_cenacolo && /usr/bin/env node cenacolo-ticket-bot.js --notify email >> bot.log 2>&1
 ```
 
-Se vuoi anche SMS:
+## 4b) Esecuzione online (GitHub Actions)
 
-```cron
-0 9,21 * * * cd /Users/kevinmuka/Desktop/bot_cenacolo && /usr/bin/env node cenacolo-ticket-bot.js --notify email,sms >> bot.log 2>&1
-```
+Se non vuoi tenere il Mac acceso, puoi usare il workflow:
+
+- [cenacolo-bot.yml](/Users/kevinmuka/Desktop/bot_cenacolo/.github/workflows/cenacolo-bot.yml)
+
+Il workflow:
+
+- gira 2 volte al giorno,
+- invia email,
+- salva lo stato anti-duplicati in `.github/state/cenacolo_seen.json`.
+
+Setup:
+
+1. Pusha il repository su GitHub.
+2. In GitHub vai su `Settings > Secrets and variables > Actions` e crea i secrets:
+   - `SMTP_HOST`
+   - `SMTP_PORT`
+   - `SMTP_SECURE`
+   - `SMTP_USER`
+   - `SMTP_PASS`
+   - `EMAIL_FROM`
+   - `EMAIL_TO`
+3. Vai su `Actions > Cenacolo Bot > Run workflow` per il primo test.
+
+Nota: il cron di GitHub Actions usa UTC.
 
 ## 5) Opzioni utili
 
@@ -96,4 +110,4 @@ Opzioni principali:
 ## 6) Strategia consigliata costo/affidabilita
 
 - Usa `email` come canale principale.
-- Aggiungi `sms` solo quando vuoi una notifica piu urgente (costo per messaggio).
+- Configurazione minima: SMTP Gmail o altro provider SMTP.

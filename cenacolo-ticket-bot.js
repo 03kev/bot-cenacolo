@@ -7,7 +7,6 @@ const process = require('node:process');
 require('dotenv').config();
 
 const nodemailer = require('nodemailer');
-const twilio = require('twilio');
 
 const { fetchPosts, isSalePost } = require('./scripts/fetch-news');
 const { displayDate, resolveSaleDate } = require('./scripts/sale-info');
@@ -54,13 +53,13 @@ function printHelp() {
 Uso:
   node cenacolo-ticket-bot.js [opzioni]
 
-Opzioni:
+  Opzioni:
   --news-url <url>            URL pagina notizie
   --base-url <url>            URL base sito
   --state-file <path>         File JSON con post gia visti
   --limit <n>                 Numero massimo post da leggere (default: 40)
   --timeout-ms <n>            Timeout HTTP in ms (default: 20000)
-  --notify <canali>           Canali separati da virgola: stdout,email,sms
+  --notify <canali>           Canali separati da virgola: stdout,email
   --show-all                  Mostra/notifica anche post gia visti
   --notify-on-first-run       Notifica anche al primo avvio
   --no-save                   Non aggiorna il file stato
@@ -145,26 +144,6 @@ async function notifyEmail(posts) {
   await transporter.sendMail({ from, to, subject, text });
 }
 
-async function notifySms(posts) {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
-  const from = process.env.TWILIO_FROM;
-  const to = process.env.TWILIO_TO;
-
-  if (!accountSid || !authToken || !from || !to) {
-    throw new Error('Variabili Twilio mancanti: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM, TWILIO_TO');
-  }
-
-  const client = twilio(accountSid, authToken);
-
-  for (const post of posts) {
-    const base = `[Cenacolo] ${displayDate(post?.date)} | ${post?.title || 'n/d'}`;
-    const salePart = isSalePost(post) ? ` | Apertura vendite: ${await resolveSaleDate(post)}` : '';
-    const body = `${base}${salePart} - ${post?.link || 'link non disponibile'}`;
-    await client.messages.create({ from, to, body: body.slice(0, 1550) });
-  }
-}
-
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const statePath = path.resolve(process.cwd(), args.stateFile);
@@ -205,12 +184,8 @@ async function main() {
       await notifyEmail(toNotify);
       console.log(`Email inviata (${toNotify.length} news).`);
     }
-    if (channels.has('sms')) {
-      await notifySms(toNotify);
-      console.log(`SMS inviati (${toNotify.length} news).`);
-    }
     if (channels.size === 0) {
-      console.log('Nessun canale notifica selezionato; usa --notify stdout,email,sms');
+      console.log('Nessun canale notifica selezionato; usa --notify stdout,email');
     }
   }
 

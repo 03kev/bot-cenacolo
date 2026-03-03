@@ -3,3 +3,4 @@ node_modules/
 .cenacolo_seen.json
 bot.log
 __pycache__/
+.DS_Store

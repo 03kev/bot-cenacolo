@@ -2,8 +2,9 @@ name: Cenacolo Digest
 
 on:
   schedule:
-    # Una volta al giorno (UTC): invio ultime 5 news
-    - cron: "0 7 * * *"
+    # Trigger UTC + guardia timezone Europe/Rome nel job:
+    # CET -> 07 UTC | CEST -> 06 UTC
+    - cron: "0 6,7 * * *"
   workflow_dispatch:
 
 permissions:
@@ -13,19 +14,34 @@ jobs:
   run-digest:
     runs-on: ubuntu-latest
     steps:
+      - name: Check Rome schedule
+        id: schedule
+        run: |
+          HOUR_ROME="$(TZ=Europe/Rome date +%H)"
+          SHOULD_RUN="false"
+          if [ "$HOUR_ROME" = "08" ]; then
+            SHOULD_RUN="true"
+          fi
+          echo "rome_hour=$HOUR_ROME" >> "$GITHUB_OUTPUT"
+          echo "should_run=$SHOULD_RUN" >> "$GITHUB_OUTPUT"
+
       - name: Checkout
+        if: github.event_name == 'workflow_dispatch' || steps.schedule.outputs.should_run == 'true'
         uses: actions/checkout@v4
 
       - name: Setup Node
+        if: github.event_name == 'workflow_dispatch' || steps.schedule.outputs.should_run == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
 
       - name: Install dependencies
+        if: github.event_name == 'workflow_dispatch' || steps.schedule.outputs.should_run == 'true'
         run: npm ci
 
       - name: Run digest
+        if: github.event_name == 'workflow_dispatch' || steps.schedule.outputs.should_run == 'true'
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
@@ -40,3 +56,8 @@ jobs:
             --mode digest \
             --digest-limit 5 \
             --notify email
+
+      - name: Skip (outside Rome schedule)
+        if: github.event_name != 'workflow_dispatch' && steps.schedule.outputs.should_run != 'true'
+        run: |
+          echo "Skip run: current Europe/Rome hour is ${{ steps.schedule.outputs.rome_hour }}."

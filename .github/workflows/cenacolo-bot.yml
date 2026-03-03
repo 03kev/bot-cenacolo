@@ -2,8 +2,9 @@ name: Cenacolo Bot
 
 on:
   schedule:
-    # Ogni 6 ore (UTC): controllo news nuove
-    - cron: "0 */6 * * *"
+    # Trigger UTC + guardia timezone Europe/Rome nel job:
+    # CET -> 23,5,11,17 UTC | CEST -> 22,4,10,16 UTC
+    - cron: "0 22,23,4,5,10,11,16,17 * * *"
   workflow_dispatch:
 
 permissions:
@@ -13,19 +14,34 @@ jobs:
   run-bot:
     runs-on: ubuntu-latest
     steps:
+      - name: Check Rome schedule
+        id: schedule
+        run: |
+          HOUR_ROME="$(TZ=Europe/Rome date +%H)"
+          SHOULD_RUN="false"
+          if [ "$HOUR_ROME" = "00" ] || [ "$HOUR_ROME" = "06" ] || [ "$HOUR_ROME" = "12" ] || [ "$HOUR_ROME" = "18" ]; then
+            SHOULD_RUN="true"
+          fi
+          echo "rome_hour=$HOUR_ROME" >> "$GITHUB_OUTPUT"
+          echo "should_run=$SHOULD_RUN" >> "$GITHUB_OUTPUT"
+
       - name: Checkout
+        if: github.event_name == 'workflow_dispatch' || steps.schedule.outputs.should_run == 'true'
         uses: actions/checkout@v4
 
       - name: Setup Node
+        if: github.event_name == 'workflow_dispatch' || steps.schedule.outputs.should_run == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
 
       - name: Install dependencies
+        if: github.event_name == 'workflow_dispatch' || steps.schedule.outputs.should_run == 'true'
         run: npm ci
 
       - name: Ensure state file exists
+        if: github.event_name == 'workflow_dispatch' || steps.schedule.outputs.should_run == 'true'
         run: |
           mkdir -p .github/state
           if [ ! -f .github/state/cenacolo_seen.json ]; then
@@ -33,6 +49,7 @@ jobs:
           fi
 
       - name: Run bot
+        if: github.event_name == 'workflow_dispatch' || steps.schedule.outputs.should_run == 'true'
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
@@ -48,6 +65,7 @@ jobs:
             --state-file .github/state/cenacolo_seen.json
 
       - name: Commit updated state
+        if: github.event_name == 'workflow_dispatch' || steps.schedule.outputs.should_run == 'true'
         run: |
           if git diff --quiet -- .github/state/cenacolo_seen.json; then
             echo "No state changes."
@@ -58,3 +76,8 @@ jobs:
           git add .github/state/cenacolo_seen.json
           git commit -m "chore: update cenacolo bot state"
           git push
+
+      - name: Skip (outside Rome schedule)
+        if: github.event_name != 'workflow_dispatch' && steps.schedule.outputs.should_run != 'true'
+        run: |
+          echo "Skip run: current Europe/Rome hour is ${{ steps.schedule.outputs.rome_hour }}."

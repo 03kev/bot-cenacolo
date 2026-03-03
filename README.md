@@ -77,10 +77,12 @@ Digest giornaliero top 5:
 Workflow check (4 volte/giorno):
 
 - [cenacolo-bot.yml](/Users/kevinmuka/Desktop/bot_cenacolo/.github/workflows/cenacolo-bot.yml)
+- Orari effettivi Europe/Rome: `00:00`, `06:00`, `12:00`, `18:00`
 
 Workflow digest (1 volta/giorno):
 
 - [cenacolo-digest.yml](/Users/kevinmuka/Desktop/bot_cenacolo/.github/workflows/cenacolo-digest.yml)
+- Orario effettivo Europe/Rome: `08:00`
 
 Stato anti-duplicati (usato dal check online):
 
@@ -102,7 +104,7 @@ Setup GitHub:
    - `DAILY_TOP5_ENABLED=true` (metti `false` per disattivare facilmente il digest)
 4. Lancia un test manuale da `Actions > Run workflow`.
 
-Nota: i cron di GitHub Actions sono in UTC.
+Nota: i cron GitHub sono in UTC, ma i workflow includono una guardia `Europe/Rome` per rispettare questi orari anche con ora legale/solare.
 
 ## 6) Opzioni utili
 

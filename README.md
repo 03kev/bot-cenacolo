@@ -1,12 +1,8 @@
 # Bot Cenacolo (Node.js)
 
-Monitor automatico della pagina notizie del Cenacolo Vinciano con filtro su annunci vendite tipo:
+Monitor automatico della pagina notizie del Cenacolo Vinciano.
 
-- `In vendita i biglietti per ...`
-- `Apertura vendite ...`
-- keyword nel testo (`saranno messi in vendita i biglietti`)
-
-Il bot notifica solo i nuovi annunci (evita duplicati con file stato locale).
+Il bot notifica tutte le nuove news (evita duplicati con file stato locale) e, quando una news e di vendita biglietti, aggiunge anche la data di apertura vendite estratta dal testo/articolo.
 
 ## 1) Installazione
 
@@ -55,6 +51,13 @@ Note:
 
 - Al primo avvio inizializza lo stato e non manda notifiche retroattive.
 - Se vuoi notificare anche al primo avvio: `--notify-on-first-run`
+- Formato output/email per news vendita:
+
+```text
+12 Dicembre 2022 | In vendita i biglietti per i mesi di febbraio, marzo e aprile 2023
+    https://cenacolovinciano.org/news-ed-eventi/in-vendita-i-biglietti-per-i-mesi-di-febbraio-marzo-e-aprile-2023/
+    Apertura vendite: 15 Dicembre 2022 ore 12:00
+```
 
 ## 4) Schedulazione 2 volte al giorno (cron)
 

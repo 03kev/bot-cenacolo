@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const { fetchPosts } = require('./fetch-news');
+const { displayDate } = require('./sale-info');
 
 function parseLimitArg(argv, fallback) {
   if (!argv.length) return fallback;
@@ -28,14 +29,6 @@ function parseLimitArg(argv, fallback) {
     throw new Error('Limite non valido. Usa un intero positivo.');
   }
   return value;
-}
-
-function displayDate(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return 'n/d';
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-  if (/^\d{4}-\d{2}-\d{2}T/.test(raw)) return raw.slice(0, 10);
-  return raw;
 }
 
 async function main() {

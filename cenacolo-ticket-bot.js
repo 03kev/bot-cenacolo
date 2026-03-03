@@ -6,11 +6,11 @@ const process = require('node:process');
 
 require('dotenv').config();
 
-const axios = require('axios');
-const cheerio = require('cheerio');
 const nodemailer = require('nodemailer');
 const twilio = require('twilio');
-const { fetchPosts: fetchStructuredPosts, isSalePost } = require('./scripts/fetch-news');
+
+const { fetchPosts, isSalePost } = require('./scripts/fetch-news');
+const { displayDate, resolveSaleDate } = require('./scripts/sale-info');
 
 const DEFAULTS = {
   newsUrl: 'https://cenacolovinciano.org/notizie/',
@@ -20,18 +20,6 @@ const DEFAULTS = {
   timeoutMs: 20_000,
   notify: 'stdout',
 };
-
-const TITLE_PATTERNS = [
-  /^in vendita i biglietti per/i,
-  /^apertura vendite/i,
-];
-
-const BODY_KEYWORDS = [
-  'saranno messi in vendita i biglietti',
-  'messi in vendita i biglietti',
-  'apertura vendite',
-  'in vendita i biglietti',
-];
 
 function parseArgs(argv) {
   const args = {
@@ -68,7 +56,7 @@ Uso:
 
 Opzioni:
   --news-url <url>            URL pagina notizie
-  --base-url <url>            URL base sito (per API WP)
+  --base-url <url>            URL base sito
   --state-file <path>         File JSON con post gia visti
   --limit <n>                 Numero massimo post da leggere (default: 40)
   --timeout-ms <n>            Timeout HTTP in ms (default: 20000)
@@ -78,72 +66,6 @@ Opzioni:
   --no-save                   Non aggiorna il file stato
   --help, -h                  Mostra questo help
 `);
-}
-
-function normalizeSpaces(value) {
-  return String(value || '').replace(/\s+/g, ' ').trim();
-}
-
-function matchesSale(post) {
-  return isSalePost(post);
-}
-
-async function fetchPostsFromApi(baseUrl, limit, timeoutMs) {
-  const endpoint = `${baseUrl.replace(/\/$/, '')}/wp-json/wp/v2/posts`;
-  const response = await axios.get(endpoint, {
-    params: {
-      per_page: Math.min(Math.max(limit, 1), 100),
-      orderby: 'date',
-      order: 'desc',
-      _fields: 'date,link,title,excerpt',
-    },
-    timeout: timeoutMs,
-  });
-
-  return response.data.map((entry) => {
-    const title = cheerio.load(entry?.title?.rendered || '').text();
-    const excerpt = cheerio.load(entry?.excerpt?.rendered || '').text();
-    const link = entry?.link || '';
-    const date = entry?.date || '';
-    return {
-      title: normalizeSpaces(title),
-      excerpt: normalizeSpaces(excerpt),
-      link,
-      date,
-      uid: link || `${date}|${normalizeSpaces(title)}`,
-    };
-  });
-}
-
-async function fetchPostsFromHtml(newsUrl, timeoutMs) {
-  const response = await axios.get(newsUrl, { timeout: timeoutMs });
-  const $ = cheerio.load(response.data);
-  const seen = new Set();
-  const posts = [];
-
-  $('article').each((_, article) => {
-    const heading = $(article).find('h1, h2, h3, h4, h5, h6').first();
-    if (!heading.length) return;
-
-    const link = heading.find('a').attr('href') || $(article).find('a').first().attr('href') || '';
-    const date = $(article).find('time').first().attr('datetime') || '';
-    const title = normalizeSpaces(heading.text());
-    const excerpt = normalizeSpaces(
-      $(article)
-        .find('p')
-        .map((__, p) => $(p).text())
-        .get()
-        .join(' ')
-    );
-
-    const uid = link || `${date}|${title}`;
-    if (!uid || seen.has(uid)) return;
-
-    seen.add(uid);
-    posts.push({ title, excerpt, link, date, uid });
-  });
-
-  return posts;
 }
 
 async function loadState(filePath) {
@@ -176,19 +98,25 @@ function splitNotifyChannels(notifyArg) {
   );
 }
 
-function formatDigest(posts) {
-  const lines = [`Nuovo annuncio vendite Cenacolo (${posts.length})`];
+async function formatDigest(posts) {
+  const lines = [`Nuove news Cenacolo (${posts.length})`];
+
   for (const post of posts) {
     lines.push('');
-    lines.push(`Titolo: ${post.title || 'n/d'}`);
-    lines.push(`Data: ${post.date || 'n/d'}`);
-    lines.push(`Link: ${post.link || 'n/d'}`);
+    lines.push(`${displayDate(post?.date)} | ${post?.title || 'n/d'}`);
+    lines.push(`    ${post?.link || 'n/d'}`);
+
+    if (isSalePost(post)) {
+      const saleDate = await resolveSaleDate(post);
+      lines.push(`    Apertura vendite: ${saleDate}`);
+    }
   }
+
   return lines.join('\n');
 }
 
 async function notifyStdout(posts) {
-  console.log(formatDigest(posts));
+  console.log(await formatDigest(posts));
 }
 
 async function notifyEmail(posts) {
@@ -211,8 +139,8 @@ async function notifyEmail(posts) {
     auth: { user, pass },
   });
 
-  const subject = `[Cenacolo] Nuovo annuncio vendite (${posts.length})`;
-  const text = formatDigest(posts);
+  const subject = `[Cenacolo] Nuove news (${posts.length})`;
+  const text = await formatDigest(posts);
 
   await transporter.sendMail({ from, to, subject, text });
 }
@@ -230,18 +158,11 @@ async function notifySms(posts) {
   const client = twilio(accountSid, authToken);
 
   for (const post of posts) {
-    const body = `[Cenacolo] ${post.title} - ${post.link || 'link non disponibile'}`;
+    const base = `[Cenacolo] ${displayDate(post?.date)} | ${post?.title || 'n/d'}`;
+    const salePart = isSalePost(post) ? ` | Apertura vendite: ${await resolveSaleDate(post)}` : '';
+    const body = `${base}${salePart} - ${post?.link || 'link non disponibile'}`;
     await client.messages.create({ from, to, body: body.slice(0, 1550) });
   }
-}
-
-async function fetchPosts(args) {
-  return fetchStructuredPosts({
-    newsUrl: args.newsUrl,
-    baseUrl: args.baseUrl,
-    limit: args.limit,
-    timeoutMs: args.timeoutMs,
-  });
 }
 
 async function main() {
@@ -249,19 +170,23 @@ async function main() {
   const statePath = path.resolve(process.cwd(), args.stateFile);
   const { exists: stateExists, seen: seenBefore } = await loadState(statePath);
 
-  const posts = await fetchPosts(args);
-  const matching = posts.filter(matchesSale);
+  const posts = await fetchPosts({
+    newsUrl: args.newsUrl,
+    baseUrl: args.baseUrl,
+    limit: args.limit,
+    timeoutMs: args.timeoutMs,
+  });
 
-  if (matching.length === 0) {
-    console.log('Nessun annuncio vendite trovato.');
+  if (posts.length === 0) {
+    console.log('Nessuna news trovata.');
     return;
   }
 
   const firstRun = !stateExists;
 
-  let toNotify = matching;
+  let toNotify = posts;
   if (!args.showAll) {
-    toNotify = matching.filter((post) => !seenBefore.has(post.uid));
+    toNotify = posts.filter((post) => !seenBefore.has(post.uid));
   }
 
   if (firstRun && !args.notifyOnFirstRun && !args.showAll) {
@@ -271,18 +196,18 @@ async function main() {
 
   const channels = splitNotifyChannels(args.notify);
   if (toNotify.length === 0) {
-    console.log('Nessun nuovo annuncio vendite.');
+    console.log('Nessuna nuova news.');
   } else {
     if (channels.has('stdout')) {
       await notifyStdout(toNotify);
     }
     if (channels.has('email')) {
       await notifyEmail(toNotify);
-      console.log(`Email inviata (${toNotify.length} annuncio/i).`);
+      console.log(`Email inviata (${toNotify.length} news).`);
     }
     if (channels.has('sms')) {
       await notifySms(toNotify);
-      console.log(`SMS inviati (${toNotify.length} annuncio/i).`);
+      console.log(`SMS inviati (${toNotify.length} news).`);
     }
     if (channels.size === 0) {
       console.log('Nessun canale notifica selezionato; usa --notify stdout,email,sms');
@@ -290,7 +215,7 @@ async function main() {
   }
 
   if (!args.noSave) {
-    const updatedSeen = new Set([...seenBefore, ...matching.map((post) => post.uid)]);
+    const updatedSeen = new Set([...seenBefore, ...posts.map((post) => post.uid)]);
     await saveState(statePath, updatedSeen);
   }
 }
